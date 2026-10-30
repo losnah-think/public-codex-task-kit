@@ -6,10 +6,10 @@
 
 | 구성 | 역할 | 적용 시점 |
 | --- | --- | --- |
-| `task-brief` | 요구사항·필수 산출물·검증 기준을 짧게 정리 | 새 과제 시작·요구사항 변경 |
-| `verification-before-completion` | 실제 검증 없이 완료했다고 말하지 않도록 확인 | 수정 완료·결과 보고 전 |
-| `ui-ux-pro-max` | 로컬 데이터에서 UI·UX·접근성·반응형 지침 검색 | UI가 있는 과제에만 |
-| `harness/AGENTS.md` | 읽기 → 최소 계획 → 구현 → 검증 → 근거 기록 | 코딩 작업의 공통 흐름 |
+| `task-brief` · `verification-before-completion` | 요구사항·산출물·검증 기준과 실제 결과 확인 | 시작·마무리 |
+| `ui-ux-pro-max` · `antislop` · `antislop-copywriting` | 로컬 UI/UX 검색과 디자인·문구의 과장·반복 점검 | UI·사람이 읽는 문구 작성 |
+| `humanize-korean` · `proofread` | 뜻을 보존한 한국어 윤문, 맞춤법·띄어쓰기·비문 교정 | 한국어 문구·문서 작성 |
+| `harness/AGENTS.md` · 설치기 | 읽기 → 최소 계획 → 구현 → 검증 → 근거 기록 | 공통 흐름·안전한 설치/갱신 |
 
 코딩 모델이나 MCP 서버를 추가하지 않습니다. 전체 Superpowers 플러그인, 브라우저 자동화, 외부 모델 호출, 원격 저장·원격 제어는 포함하지 않습니다.
 
@@ -27,21 +27,27 @@
 set -eu
 task_project="$PWD"
 kit_dir="$(mktemp -d)"
-git clone --depth 1 --branch v1.0.0 https://github.com/losnah-think/public-codex-task-kit.git "$kit_dir"
+git clone --depth 1 --branch v1.1.0 https://github.com/losnah-think/public-codex-task-kit.git "$kit_dir"
 kit_ref="$(git -C "$kit_dir" rev-parse HEAD)"
 
+# 이전 영수증이 있으면 검증된 관리 파일만 갱신
+set --
+if [ -f "$task_project/.agents/public-task-kit/source.json" ]; then
+  set -- --upgrade
+fi
+
 # --check는 변경 없이 충돌과 설치 경로만 확인
-python3 "$kit_dir/scripts/install.py" --project "$task_project" --ref "$kit_ref" --check
+python3 "$kit_dir/scripts/install.py" --project "$task_project" --ref "$kit_ref" --check "$@"
 
 # 위 검사가 성공한 경우에만 실제 설치
-python3 "$kit_dir/scripts/install.py" --project "$task_project" --ref "$kit_ref"
+python3 "$kit_dir/scripts/install.py" --project "$task_project" --ref "$kit_ref" "$@"
 )
 ```
 
 위 명령은 순서대로 실행하고 오류가 나오면 중단하세요. 파일을 덮어쓰거나 우회해서 진행하지 않습니다. 정확한 재현이 필요하면 공개 릴리스의 전체 commit SHA를 확인하고 그 SHA를 checkout한 뒤 설치하세요. 설치 영수증의 `supplied_ref`는 호출자가 전달한 값이며, 스크립트가 GitHub에 조회해 진위를 보증하는 값은 아닙니다.
 
 4. 사용 중인 Codex는 `/exit` 후 기존 프로젝트 루트에서 `codex`로 다시 시작합니다. `/status`로 허용 모델을 다시 확인하고 `/skills`에서 설치된 Skill이 보이는지 확인합니다. 새 `AGENTS.md` 지침은 새 세션에서 읽힙니다.
-5. `$task-brief`로 실제 과제의 요구사항과 확인 방법을 정리하고 작업합니다. UI가 있는 경우에만 `$ui-ux-pro-max`를 사용합니다. 끝내기 전 `$verification-before-completion`으로 실제 확인 결과를 기록합니다.
+5. `$task-brief`로 실제 과제의 요구사항과 확인 방법을 정리하고 작업합니다. UI가 있는 경우 `$ui-ux-pro-max`와 `$antislop`을 적용합니다. 사람이 읽는 문구에는 `$antislop-copywriting`, 한국어 윤문에는 `$humanize-korean`, 맞춤법·띄어쓰기·비문에는 `$proofread`를 사용합니다. 끝내기 전 `$verification-before-completion`으로 실제 확인 결과를 기록합니다.
 
 Skill 발견 방식은 제공 환경 버전에 따라 다를 수 있습니다. 목록에 보이지 않으면 제공 Codex에게 설치된 `.agents/skills/` 파일을 읽게 하거나 플랫폼의 안내 수단에 문의하세요. 플랫폼 설정·관리 프로세스는 변경하지 않습니다.
 
@@ -51,6 +57,7 @@ Skill 발견 방식은 제공 환경 버전에 따라 다를 수 있습니다. �
 - `.agents/public-task-kit/`에 하네스·출처·라이선스·파일 해시 영수증을 저장합니다.
 - 기존 `AGENTS.md` 내용은 유지하고 짧은 추가 지침 링크만 붙입니다. 기존 프로젝트·플랫폼 지침은 계속 우선합니다.
 - 같은 파일로 다시 실행하면 변경하지 않습니다. 다른 내용의 파일이 있으면 덮어쓰기 전에 중단합니다.
+- `--upgrade`는 이전 영수증의 저장소·경로·해시를 확인하고, 기록된 그대로인 관리 파일만 갱신합니다. 사용자가 수정·삭제한 파일이나 새 파일과의 충돌이 있으면 쓰기 전에 중단합니다. 삭제 기능은 없습니다. 교체는 파일 단위로 수행되므로 디스크 오류 등으로 중단되면 성공으로 간주하지 말고 상태를 확인하세요.
 - 네트워크·외부 명령·패키지 설치·전역 설정·API 키·모델·Git remote를 변경하지 않습니다. Python 3.9 이상 표준 라이브러리만 필요합니다. Python 3.9.6에서 검증했습니다.
 
 상위 지침이나 `AGENTS.override.md`가 있는 경우 그 지침이 우선합니다. 설치된 하네스가 자동으로 적용되지 않으면 제공 Codex에서 파일을 명시적으로 읽어 확인하세요.
@@ -65,6 +72,24 @@ python3 .agents/skills/ui-ux-pro-max/scripts/search.py "keyboard focus" --domain
 ```
 
 기존 UI 방향이나 디자인 시스템이 있으면 우선합니다. 검색 결과가 외부 글꼴·이미지 URL을 제안해도 자동으로 외부 자원을 연결하지 마세요. 플랫폼 허용 범위와 네트워크 제약을 확인하고 로컬·시스템 자원을 우선합니다. UI 조작·촬영·브라우저 자동화는 이 키트에 포함되지 않습니다.
+
+## 안티슬롭·한국어 윤문 사용
+
+하네스는 UI와 문구를 만드는 동안 `antislop`을 **during(project default)** 모드로 적용합니다. 전역 설정을 읽거나 바꾸지 않습니다. 문구에는 `antislop-copywriting`을 함께 적용하고, 화면과 무관한 문서에는 UI 검사를 N/A로 표시합니다. 사람이 직접 확인하지 않은 화면·버튼 동작은 수동 확인 대기로 남깁니다.
+
+```text
+$antislop UI와 문구의 과장·반복·근거 없는 주장부터 점검하고 작업 중 적용해줘.
+$humanize-korean 지정 문서의 번역투와 반복을 다듬되 사실·수치·날짜·이름·조건·인용은 보존해줘.
+$proofread 윤문한 문서의 맞춤법·띄어쓰기·명백한 비문만 교정해줘.
+```
+
+한국어 윤문은 원문을 보존한 뒤 수행합니다. 사실·수치·조건·서법은 별도로 대조하고, 아래 로컬 스크립트로 변경률을 실제 계산합니다. **30% 이상은 경고, 50% 이상은 채택 금지·롤백, 종료 코드 3은 검증 오류**입니다. 숫자를 맞추려고 멀쩡한 문장을 바꾸지 않습니다.
+
+```sh
+python3 .agents/skills/humanize-korean/scripts/verify_change_rate.py --before ORIGINAL.txt --after EDITED.md
+```
+
+변경률은 수정 범위이며 사실 보존이나 문장 품질의 보증이 아닙니다. 코드·경로·식별자·정해진 숫자는 윤문 대상이 아닙니다. 이 기능도 제공 Codex 안에서만 쓰며, **AI가 금지된 후속 서술형에는 사용하지 않습니다.**
 
 ## 사용 기록과 유지
 

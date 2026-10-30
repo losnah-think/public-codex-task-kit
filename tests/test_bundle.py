@@ -44,8 +44,10 @@ class BundleTests(unittest.TestCase):
         skills = self.project / ".agents/skills"
         self.assertEqual({path.name for path in skills.iterdir()}, {
             "task-brief", "verification-before-completion", "ui-ux-pro-max",
+            "antislop", "antislop-copywriting", "humanize-korean", "proofread",
         })
-        for name in ("verification-before-completion", "ui-ux-pro-max"):
+        for name in ("verification-before-completion", "ui-ux-pro-max", "antislop",
+                     "antislop-copywriting", "humanize-korean", "proofread"):
             self.assertEqual((skills / name / "LICENSE").read_bytes(),
                              (BUNDLE / "skills" / name / "LICENSE").read_bytes())
         receipt = json.loads((self.project / ".agents/public-task-kit/source.json").read_text())
@@ -54,6 +56,35 @@ class BundleTests(unittest.TestCase):
         before = self.snapshot()
         self.assertEqual(INSTALL(self.project, REF), [])
         self.assertEqual(self.snapshot(), before)
+
+    def test_korean_change_gate_thresholds_work_offline(self):
+        INSTALL(self.project, REF)
+        script = self.project / ".agents/skills/humanize-korean/scripts/verify_change_rate.py"
+        before = self.root / "original.txt"
+        after = self.root / "edited.md"
+        before.write_text("가" * 10, encoding="utf-8")
+        cases = [
+            ("가" * 10 + "\n<!-- HUMANIZE-SUMMARY measured separately -->", 0, "0.0%"),
+            ("가" * 7 + "나" * 3, 1, "30.0%"),
+            ("가" * 5 + "나" * 5, 2, "50.0%"),
+        ]
+        for text, code, rate in cases:
+            with self.subTest(code=code):
+                after.write_text(text, encoding="utf-8")
+                result = subprocess.run(
+                    [sys.executable, "-B", "-c", OFFLINE_RUNNER, str(script),
+                     "--before", str(before), "--after", str(after)],
+                    cwd=self.root, capture_output=True, text=True, timeout=20,
+                )
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertIn(rate, result.stdout)
+                self.assertEqual(after.read_text(encoding="utf-8"), text)
+        after.unlink()
+        result = subprocess.run(
+            [sys.executable, "-B", str(script), "--before", str(before), "--after", str(after)],
+            cwd=self.root, capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(result.returncode, 3)
 
     def test_installed_ui_search_works_offline_from_unrelated_cwd(self):
         INSTALL(self.project, REF)

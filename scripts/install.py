@@ -2,9 +2,11 @@
 import argparse
 import hashlib
 import json
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
 import re
 import sys
+import tempfile
 
 
 BUNDLE = Path(__file__).resolve().parents[1]
@@ -31,7 +33,66 @@ def no_symlinks(path, root):
         current = current.parent
 
 
-def install(project, revision, check=False, bundle=BUNDLE):
+def read_prior_receipt(path, project, source_url, payload):
+    no_symlinks(path, project)
+    if not path.is_file():
+        raise ValueError("--upgrade requires an existing source.json receipt")
+    original = path.read_bytes()
+    receipt = json.loads(original)
+    if not isinstance(receipt, dict) or receipt.get("repository") != source_url.rstrip("/"):
+        raise ValueError("Prior receipt repository does not match SOURCE_URL")
+    revision = receipt.get("supplied_ref")
+    files = receipt.get("files")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+        raise ValueError("Prior receipt has an invalid supplied_ref")
+    if not isinstance(files, dict) or not files:
+        raise ValueError("Prior receipt must contain a nonempty files dictionary")
+    managed = {}
+    for key, digest in files.items():
+        if not isinstance(key, str) or "\\" in key or "\x00" in key:
+            raise ValueError("Prior receipt has an unsafe file path")
+        parts = PurePosixPath(key).parts
+        known = key in {
+            ".agents/public-task-kit/AGENTS.md",
+            ".agents/public-task-kit/SOURCES.md",
+            ".agents/public-task-kit/LICENSE",
+        } or (
+            len(parts) >= 4 and parts[:2] == (".agents", "skills")
+            and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", parts[2])
+        )
+        if not known or ".." in parts or PurePosixPath(key).as_posix() != key:
+            raise ValueError("Prior receipt has an unsafe file path: " + key)
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+            raise ValueError("Prior receipt has an invalid SHA256: " + key)
+        target = project / key
+        no_symlinks(target, project)
+        if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != digest.lower():
+            raise ValueError("Managed file was modified or deleted: " + str(target))
+        if target not in payload:
+            raise ValueError("Bundle omits a managed file; automatic removal is unsupported: " + key)
+        managed[target] = digest.lower()
+    managed[path] = hashlib.sha256(original).hexdigest()
+    return managed
+
+
+def replace_atomic(path, content, expected_digest):
+    if hashlib.sha256(path.read_bytes()).hexdigest() != expected_digest:
+        raise ValueError("Managed file changed during upgrade: " + str(path))
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".task-kit-", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, path.stat().st_mode & 0o777)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+
+
+def install(project, revision, check=False, bundle=BUNDLE, upgrade=False):
     if not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
         raise ValueError("--ref must be a full 40-character commit SHA")
     project = Path(project).expanduser().absolute()
@@ -75,6 +136,8 @@ def install(project, revision, check=False, bundle=BUNDLE):
                 target = project / ".agents/skills" / source.relative_to(skills)
                 payload[target] = read_source(source)
 
+    receipt_path = guidance_dir / "source.json"
+    managed = read_prior_receipt(receipt_path, project, source_url, payload) if upgrade else {}
     receipt = {
         "repository": source_url.rstrip("/"),
         "supplied_ref": revision.lower(),
@@ -83,7 +146,7 @@ def install(project, revision, check=False, bundle=BUNDLE):
             for path, data in sorted(payload.items())
         },
     }
-    payload[guidance_dir / "source.json"] = (
+    payload[receipt_path] = (
         json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
 
@@ -105,21 +168,26 @@ def install(project, revision, check=False, bundle=BUNDLE):
         no_symlinks(target, project)
         if target.exists():
             if not target.is_file() or target.read_bytes() != content:
-                raise ValueError("Existing file conflicts; nothing overwritten: " + str(target))
+                if target not in managed:
+                    raise ValueError("Existing file conflicts; nothing overwritten: " + str(target))
+                changes.append((target, content, "UPDATE"))
         else:
-            changes.append((target, content))
+            changes.append((target, content, "WRITE"))
 
-    messages = ["WRITE " + str(path) for path, _ in changes]
+    messages = [action + " " + str(path) for path, _, action in changes]
     if suffix:
         messages.append("APPEND " + str(agents))
     if not check:
         if (agents.read_bytes() if agents.exists() else b"") != original:
             raise ValueError("AGENTS.md changed during preflight; retry")
-        for target, content in changes:
+        for target, content, action in changes:
             target.parent.mkdir(parents=True, exist_ok=True)
             no_symlinks(target, project)
-            with target.open("xb") as handle:
-                handle.write(content)
+            if action == "UPDATE":
+                replace_atomic(target, content, managed[target])
+            else:
+                with target.open("xb") as handle:
+                    handle.write(content)
         if suffix:
             no_symlinks(agents, project)
             with agents.open("ab") as handle:
@@ -132,9 +200,10 @@ def main():
     parser.add_argument("--project", required=True, help="Existing project directory")
     parser.add_argument("--ref", required=True, help="Full kit commit SHA supplied by the caller")
     parser.add_argument("--check", action="store_true", help="Preflight and report planned writes only")
+    parser.add_argument("--upgrade", action="store_true", help="Update only unmodified files tracked by a valid prior receipt")
     args = parser.parse_args()
     try:
-        messages = install(args.project, args.ref, args.check)
+        messages = install(args.project, args.ref, args.check, upgrade=args.upgrade)
     except (OSError, ValueError, UnicodeError) as error:
         print("ERROR: " + str(error), file=sys.stderr)
         return 1
