@@ -6,6 +6,8 @@ This repository contains general-purpose instructions and local installation cod
 
 `skills/task-brief/`, `harness/`, `scripts/`, `tests/`, `templates/`, and this repository's documentation are original kit content under the root MIT LICENSE. No existing local private Skill was copied into them.
 
+`START.md` stores the public setup/application prompt. Root `setup.py` is an original download launcher: helper v1.1.1 installs the unchanged v1.1.0 payload at `8e7435af2fe28cc57cfffde178822987b8e3fb46`. The installed source receipt records that payload commit. The launcher does not claim to activate instructions in an already-running agent; the prompt explicitly reads the installed guidance and seven Skills in the current session.
+
 ## Verification Before Completion
 
 - Repository: https://github.com/obra/superpowers
